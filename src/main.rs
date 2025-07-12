@@ -45,12 +45,18 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Initialize AWS configuration
-    let config = aws_config::defaults(BehaviorVersion::latest()).load().await;
+    // Initialize AWS configuration with region handling
+    let config = aws_config::defaults(BehaviorVersion::latest())
+        .region("us-east-1") // Default region, can be overridden by AWS_REGION env var
+        .load()
+        .await;
     let s3_client = Client::new(&config);
 
     match cli.command {
         Commands::List { from, to, bucket } => {
+            if from >= to {
+                anyhow::bail!("Start date must be before end date");
+            }
             list_files(&s3_client, &bucket, from, to).await?;
         }
         Commands::Download { key, bucket, output } => {
@@ -76,6 +82,7 @@ async fn list_files(
     let prefix = from_year;
     
     let mut continuation_token: Option<String> = None;
+    let mut found_files = false;
     
     loop {
         let mut request = client
@@ -87,7 +94,8 @@ async fn list_files(
             request = request.continuation_token(token);
         }
         
-        let response: ListObjectsV2Output = request.send().await?;
+        let response: ListObjectsV2Output = request.send().await
+            .map_err(|e| anyhow::anyhow!("Failed to list objects in bucket '{}': {}", bucket, e))?;
         
         if let Some(objects) = response.contents {
             for object in objects {
@@ -102,7 +110,8 @@ async fn list_files(
                         if last_modified >= from && last_modified <= to {
                             // Convert S3 path to output format
                             if let Some(formatted_key) = format_s3_key_to_output(&key) {
-                                println!("{}", formatted_key);
+                                println!("{formatted_key}");
+                                found_files = true;
                             }
                         }
                     }
@@ -116,6 +125,10 @@ async fn list_files(
         } else {
             break;
         }
+    }
+    
+    if !found_files {
+        eprintln!("No files found in the specified date range");
     }
     
     Ok(())
@@ -142,13 +155,22 @@ async fn download_file(
         .bucket(bucket)
         .key(&s3_key)
         .send()
-        .await?;
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to download file '{}' from bucket '{}': {}", s3_key, bucket, e))?;
     
     let mut body = response.body.into_async_read();
     let mut buffer = Vec::new();
     body.read_to_end(&mut buffer).await?;
     
-    std::fs::write(output_path, buffer)?;
+    // Create parent directories if they don't exist
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("Failed to create output directory '{}': {}", parent.display(), e))?;
+    }
+    
+    std::fs::write(output_path, buffer)
+        .map_err(|e| anyhow::anyhow!("Failed to write file to '{}': {}", output_path.display(), e))?;
+    
     println!("Downloaded {} to {}", s3_key, output_path.display());
     
     Ok(())
@@ -172,7 +194,7 @@ fn format_s3_key_to_output(s3_key: &str) -> Option<String> {
         
         if t_marker == "T" && year.len() == 4 && month.len() == 2 && day.len() == 2 
             && hour.len() == 2 && minute.len() == 2 {
-            return Some(format!("{}{}{}T{}{}00Z-{}", year, month, day, hour, minute, filename));
+            return Some(format!("{year}{month}{day}T{hour}{minute}00Z-{filename}"));
         }
     }
     
@@ -208,7 +230,7 @@ fn convert_timestamp_to_s3_path(timestamp_key: &str) -> Result<String> {
             let hour = &timestamp_part[9..11];
             let minute = &timestamp_part[11..13];
             
-            return Ok(format!("{}/{}/{}/T/{}/{}/{}", year, month, day, hour, minute, filename));
+            return Ok(format!("{year}/{month}/{day}/T/{hour}/{minute}/{filename}"));
         }
     }
     
