@@ -91,7 +91,10 @@ async fn list_objects(
         .unwrap()
         .and_utc();
 
-    println!("Listing objects in bucket '{}' from {} to {}", bucket, start_date, end_date);
+    println!(
+        "Listing objects in bucket '{}' from {} to {}",
+        bucket, start_date, end_date
+    );
 
     let resp = client.list_objects_v2().bucket(bucket).send().await?;
 
@@ -123,7 +126,10 @@ async fn list_objects(
                     })
                     .unwrap_or_else(|| "Unknown".to_string());
                 let size = object.size().unwrap_or(0);
-                println!("  {} (size: {} bytes, modified: {})", key, size, last_modified);
+                println!(
+                    "  {} (size: {} bytes, modified: {})",
+                    key, size, last_modified
+                );
             }
         }
     }
@@ -131,13 +137,13 @@ async fn list_objects(
     Ok(())
 }
 
-async fn download_object(
-    client: &Client,
-    bucket: &str,
-    key: &str,
-    output: &PathBuf,
-) -> Result<()> {
-    println!("Downloading '{}' from bucket '{}' to '{}'", key, bucket, output.display());
+async fn download_object(client: &Client, bucket: &str, key: &str, output: &PathBuf) -> Result<()> {
+    println!(
+        "Downloading '{}' from bucket '{}' to '{}'",
+        key,
+        bucket,
+        output.display()
+    );
 
     let resp = client.get_object().bucket(bucket).key(key).send().await?;
 
@@ -150,7 +156,130 @@ async fn download_object(
     }
 
     std::fs::write(output, &bytes)?;
-    println!("Successfully downloaded {} bytes to '{}'", bytes.len(), output.display());
+    println!(
+        "Successfully downloaded {} bytes to '{}'",
+        bytes.len(),
+        output.display()
+    );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn verify_cli() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_list_default_bucket() {
+        let cli = Cli::try_parse_from([
+            "lmbcli",
+            "list",
+            "--start-date",
+            "2025-12-15",
+            "--end-date",
+            "2025-12-16",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::List {
+                bucket,
+                start_date,
+                end_date,
+            } => {
+                assert_eq!(bucket, "lumbrr");
+                assert_eq!(start_date, "2025-12-15");
+                assert_eq!(end_date, "2025-12-16");
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_list_custom_bucket() {
+        let cli = Cli::try_parse_from([
+            "lmbcli",
+            "list",
+            "--bucket",
+            "custom-bucket",
+            "--start-date",
+            "2025-12-15",
+            "--end-date",
+            "2025-12-16",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::List {
+                bucket,
+                start_date,
+                end_date,
+            } => {
+                assert_eq!(bucket, "custom-bucket");
+                assert_eq!(start_date, "2025-12-15");
+                assert_eq!(end_date, "2025-12-16");
+            }
+            _ => panic!("Expected List command"),
+        }
+    }
+
+    #[test]
+    fn test_download_default_bucket() {
+        let cli = Cli::try_parse_from([
+            "lmbcli",
+            "download",
+            "--key",
+            "test.log",
+            "--output",
+            "./downloads/",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Download {
+                bucket,
+                key,
+                output,
+            } => {
+                assert_eq!(bucket, "lumbrr");
+                assert_eq!(key, "test.log");
+                assert_eq!(output, PathBuf::from("./downloads/"));
+            }
+            _ => panic!("Expected Download command"),
+        }
+    }
+
+    #[test]
+    fn test_download_custom_bucket() {
+        let cli = Cli::try_parse_from([
+            "lmbcli",
+            "download",
+            "--bucket",
+            "custom-bucket",
+            "--key",
+            "test.log",
+            "--output",
+            "./downloads/",
+        ])
+        .unwrap();
+
+        match cli.command {
+            Commands::Download {
+                bucket,
+                key,
+                output,
+            } => {
+                assert_eq!(bucket, "custom-bucket");
+                assert_eq!(key, "test.log");
+                assert_eq!(output, PathBuf::from("./downloads/"));
+            }
+            _ => panic!("Expected Download command"),
+        }
+    }
 }
